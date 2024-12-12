@@ -1,3 +1,6 @@
+import os
+import cv2
+import numpy as np
 import torch
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -11,21 +14,67 @@ from sklearn.metrics import roc_curve, auc
 import random
 import pickle
 from lenet import LeNet
-from load_data2 import load_data
-from UNet_for_diffusion import UNet
 
-num_steps = 10  # Number of diffusion steps
-beta_start = 0.0001     # Starting noise level
-beta_end = 0.0005
-beta = torch.linspace(beta_start, beta_end, num_steps)
-alpha = 1 - beta
-alpha_bar = torch.cumprod(alpha, dim=0)
+def load_data():
+    hernia_path_train = '/Users/nayem/Desktop/Research/MS_Thesis/Hernia PA (154) Train/'
+    hernia_path_test = '/Users/nayem/Desktop/Research/MS_Thesis/Hernia PA (38) Test/'
+    normal_path = '/Users/nayem/Desktop/Research/MS_Thesis/Normal PA (1000)/'
+    gen_path = '/Users/nayem/Desktop/Research/MS_Thesis/Generated/'
+
+    x1_tr = []
+    y1_tr = []
+    x1_ts = []
+    y1_ts = []
+    x0 = []
+    y0 = []
+
+    for filename in os.listdir(hernia_path_train):
+        img = cv2.imread(os.path.join(hernia_path_train, filename), 0)
+        if img is not None:
+            img = (img / 255.0).astype(np.float32)
+            # store loaded image
+            assert (img.shape == (128, 128))
+            x1_tr.append(img)
+            y1_tr.append(1)
+
+    for filename in os.listdir(hernia_path_test):
+        img = cv2.imread(os.path.join(hernia_path_test, filename), 0)
+        if img is not None:
+            img = (img / 255.0).astype(np.float32)
+            # store loaded image
+            assert (img.shape == (128, 128))
+            x1_ts.append(img)
+            y1_ts.append(1)
+
+    for filename in os.listdir(normal_path):
+        img = cv2.imread(os.path.join(normal_path, filename), 0)
+        if img is not None:
+            img = (img / 255.0).astype(np.float32)
+            # store loaded image
+            assert (img.shape == (128, 128))
+            x0.append(img)
+            y0.append(0)
+
+    for filename in os.listdir(gen_path):
+        img = cv2.imread(os.path.join(gen_path, filename), 0)
+        img = cv2.resize(img, (128, 128))
+
+        if img is not None:
+            img = (img / 255.0).astype(np.float32)
+            # store loaded image
+            assert (img.shape == (128, 128))
+            x1_tr.append(img)
+            y1_tr.append(1)
+
+    return (x0, y0, x1_tr, y1_tr, x1_ts, y1_ts)
+
+
+
 
 print(f"PyTorch version: {torch.__version__}")
 # Check PyTorch has access to MPS (Metal Performance Shader, Apple's GPU architecture)
 print(f"Is MPS (Metal Performance Shader) built? {torch.backends.mps.is_built()}")
 print(f"Is MPS available? {torch.backends.mps.is_available()}")
-
 # Set the device
 device = "mps" if torch.backends.mps.is_available() else "cpu"
 print(f"Using device: {device}")
@@ -99,7 +148,7 @@ def model_fit(model, opt, lossFn, train_dataloader, val_dataloader):
         print("Train loss: {:.6f}, Train accuracy: {:.4f}".format(avgTrainLoss, trainCorrect))
         print("Val loss: {:.6f}, Val accuracy: {:.4f}\n".format(
             avgValLoss, valCorrect))
-    with open('diff_aug_model.pkl', 'wb') as file:
+    with open('pretrained_diff_aug_model.pkl', 'wb') as file:
         pickle.dump(model, file)
 def plot_roc(p, y):
     fpr, tpr, thresholds = roc_curve(y, p)
@@ -118,52 +167,16 @@ def plot_roc(p, y):
     plt.show()
 
 
-@torch.no_grad()
-def generate_images(model, img):
-    model.eval()
-    img = torch.Tensor(img)
-    noise = torch.randn_like(img)
-    alpha_t = alpha_bar[num_steps-1].reshape(-1, 1, 1, 1)
-    x = torch.sqrt(alpha_t) * img + torch.sqrt(1 - alpha_t) * noise
-    xx=x
-    xx = xx.cpu()
-    for t in reversed(range(num_steps)):
-        z = torch.randn_like(img) if t>1 else 0
-        predicted_noise = model(x, t)
-        # x = torch.sqrt(alpha_bar[t]) * x + torch.sqrt(1 - alpha_bar[t]) * predicted_noise  # Denoising step
-        x = (1/torch.sqrt(alpha[t])) * (x - (((1-alpha[t])/(torch.sqrt(1-alpha_bar[t])))* predicted_noise)) + (beta[t] * z)  # Denoising step
-
-    x = x.clamp(0, 1)
-    return x.cpu()
-def diff_aug(x1):
-    x=[]
-    y=[]
-    model = UNet()
-    model = pickle.load(open('diffusion_model.pkl', 'rb'))
-    model.to('cpu')
-    for img in x1:
-        for i in range(3):
-            generated_image = generate_images(model, img).reshape((128, 128)).detach().numpy()
-            x.append(generated_image)
-            y.append(1)
-    return (x, y)
-
-
-
 def normal_train():
     channel = 1
 
-    # (x0, x1, y0, y1) = load_data();
+
     (x0, y0, x1_tr, y1_tr, x1_ts, y1_ts) = load_data();
+
     x_train = np.concatenate((np.array(x0)[:800, :, :], np.array(x1_tr)), axis=0)
     y_train = np.concatenate((np.array(y0)[:800], np.array(y1_tr)), axis=0)
     x_test = np.concatenate((np.array(x0)[800:, :], np.array(x1_ts)), axis=0)
     y_test = np.concatenate((np.array(y0)[800:], np.array(y1_ts)), axis=0)
-
-    xaug, yaug = diff_aug(x1_tr)
-
-    x_train = np.concatenate((x_train, np.array(xaug)), axis=0)
-    y_train = np.concatenate((y_train, np.array(yaug)), axis=0)
 
     print(x_train.shape)
     print(y_train.shape)
@@ -202,9 +215,9 @@ def normal_train():
     opt = Adam(model.parameters(), lr=laringRate)
     lossFn = nn.BCELoss()
 
-    # model_fit(model, opt, lossFn, train_dataloader, test_dataloader)
+    model_fit(model, opt, lossFn, train_dataloader, test_dataloader)
 
-    model = pickle.load(open('diff_aug_model.pkl', 'rb'))
+    model = pickle.load(open('pretrained_diff_aug_model.pkl', 'rb'))
     model.cpu()
     p = model(x_test.reshape(-1, channel, 128, 128)).squeeze().detach()
     print(confusion_matrix(torch.round(p), y_test))

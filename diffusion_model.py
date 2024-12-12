@@ -5,7 +5,7 @@ from torchvision import datasets, transforms
 from torchvision.utils import make_grid
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from load_data2 import load_data
+from load_data3 import load_data
 import numpy as np
 from torch.utils.data import TensorDataset, DataLoader
 import pickle
@@ -76,6 +76,6 @@ model = UNet().to(device)
 optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
 # Training the model
-train(model, train_dataloader, optimizer, epochs=500)
+# train(model, train_dataloader, optimizer, epochs=500)
 
 
